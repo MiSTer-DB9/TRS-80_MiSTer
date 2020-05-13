@@ -5,3 +5,5 @@ set_global_assignment -name VHDL_FILE src/ht1080z.vhd
 set_global_assignment -name VERILOG_FILE src/dpram.v
 set_global_assignment -name SYSTEMVERILOG_FILE src/ym2149.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ht1080z.sv
+set_global_assignment -name VERILOG_FILE joydb9md.v
+set_global_assignment -name VERILOG_FILE joydb15.v
