@@ -3,9 +3,9 @@
 
 set -euo pipefail
 
-CORE_NAME="HT1080Z"
+CORE_NAME="ht1080z"
 MAIN_BRANCH="master"
-COMPILATION_OUTPUT="output_files/HT1080Z.rbf"
+COMPILATION_OUTPUT="output_files/ht1080z.rbf"
 
 if [[ "${FORCED:-false}" != "true" ]] && [[ "$(git log -n 1 --pretty=format:%an)" == "The CI/CD Bot" ]] ; then
     echo "The CI/CD Bot doesn't deliver a new release."

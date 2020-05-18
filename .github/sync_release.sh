@@ -3,8 +3,8 @@
 
 set -euo pipefail
 
-UPSTREAM_REPO="https://github.com/MiSTer-devel/HT1080Z_Mister.git"
-CORE_NAME="HT1080Z"
+UPSTREAM_REPO="https://github.com/MiSTer-devel/ht1080z_Mister.git"
+CORE_NAME="ht1080z"
 MAIN_BRANCH="master"
 
 echo "Fetching upstream:"
