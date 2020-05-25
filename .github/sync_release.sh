@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-UPSTREAM_REPO="https://github.com/MiSTer-devel/TRS-80_Mister.git"
+UPSTREAM_REPO="https://github.com/MiSTer-devel/TRS-80_MiSTer.git"
 CORE_NAME="TRS-80"
 MAIN_BRANCH="master"
 
