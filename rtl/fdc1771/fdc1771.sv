@@ -69,13 +69,14 @@ module fdc1771 (
 	output     [7:0] track_out,
 	output     [7:0] sector_out,
 	output     [7:0] data_in_out,
-	output     [7:0] status_out
+	output     [7:0] status_out,
+	output	  [11:0] spare_out
 
 );
 
 parameter SYS_CLK = 42578000;
 
-localparam SECTOR_BASE = 1'b0; // number of first sector on track (archie 0, dos 1)
+localparam SECTOR_BASE = 1'b0; // number of first sector on track (archie,trs80 0, dos 1) 
 localparam MAX_TRACK = 8'd250;	// A seek for a track above this will throw RNF
 
 wire [31:0] CLK_EN = (SYS_CLK / 1000)/clk_div;	// Clock in Khz adjusted for CPU speed
@@ -91,11 +92,11 @@ always @(posedge clk_sys) begin
 		controller_type <= 1'b0;
 	end else begin
 		// CMD switching (Percom Doubler)
-		if(cmd == 8'hFE) controller_type <= 1'b0; 	// SD
-		if(cmd == 8'hFF) controller_type <= 1'b1;	// DD
+	//	if(cmd == 8'hFE) controller_type <= 1'b0; 	// SD
+	//	if(cmd == 8'hFF) controller_type <= 1'b1;	// DD
 		// Sector switching (TRS Disk Doubler)
-		old_trsdd_enable <= trsdd_enable;
-		if(old_trsdd_enable != trsdd_enable) controller_type <= trsdd_enable;
+//		old_trsdd_enable <= trsdd_enable;
+//		if(old_trsdd_enable != trsdd_enable) controller_type <= trsdd_enable;
 	end
 end
 
@@ -121,9 +122,9 @@ end
 always @(*) begin
 	case(sector_size_code)
 		// TRS-80 - 256 bytes
-		2'b01: sd_lba = (((fd_spt*track[6:0]) << fd_doubleside) + (floppy_side ? 5'd0 : fd_spt) + sector[4:0] >> 1);
+		2'b01: sd_lba = (((fd_spt*track[7:0]) << fd_doubleside) + (floppy_side ? 5'd0 : fd_spt) + sector[4:0] >> 1);
 		// Atari ST - 1024 bytes
-		2'b11: sd_lba = {(16'd0 + (fd_spt*track[6:0]) << fd_doubleside) + (floppy_side ? 5'd0 : fd_spt) + sector[4:0], s_odd };
+		// 2'b11: sd_lba = {(16'd0 + (fd_spt*track[6:0]) << fd_doubleside) + (floppy_side ? 5'd0 : fd_spt) + sector[4:0], s_odd };
 		// Other
 		default: sd_lba = ((fd_spt*track[6:0]) << fd_doubleside) + (floppy_side ? 5'd0 : fd_spt) + sector[4:0];
 	endcase
@@ -142,10 +143,11 @@ wire floppy_write_protected = (floppy_drive == 4'b1110)?img_wp[0]:
 reg  [10:0] sector_len[2];
 reg   [4:0] spt[2];     // sectors/track
 reg   [9:0] gap_len[2]; // gap len/sector
+reg  [22:0] mounted_size[2] ; // size of mounted image per slot, in sectors
 reg   [1:0] doubleside;
 reg   [3:0] hd;
 
-wire [11:0] image_sectors = controller_type ? {img_size[19:8], 1'b0} : img_size[19:8] /* synthesis keep */; // SE - Adjusted for 256 byte sectors
+wire [11:0] image_sectors = controller_type ? img_size[20:9] : img_size[19:8] /* synthesis keep */; // SE - Adjusted for 256 byte sectors
 reg  [11:0] image_sps; // sectors/side
 reg   [4:0] image_spt; // sectors/track
 reg   [9:0] image_gap_len;
@@ -153,41 +155,45 @@ reg         image_doubleside;
 wire [1:0] image_hd = 2'b00; //img_size[20];
 
 always @(*) begin
-	if (sector_size_code == 3) begin
+//	if (sector_size_code == 3) begin
 		// archie
-		image_doubleside = 1'b1;
-		image_spt = image_hd ? 5'd10 : 5'd5;
-		image_gap_len = 10'd220;
-		image_sps = 10'd350;
-	end else begin
+//		image_doubleside = 1'b1;
+//		image_spt = image_hd ? 5'd10 : 5'd5;
+//		image_gap_len = 10'd220;
+//		image_sps = 10'd350;
+//	end else begin
 		// this block is valid for the .st format (or similar arrangement)
 		image_doubleside = 1'b0;
 		image_sps = image_sectors;
-		if (image_sectors > (80*10)) begin
-			image_doubleside = 1'b1;
-			image_sps = image_sectors >> 1'b1;
-		end
+//		if ( (sector_size_code != 1) && (image_sectors > (80*10)) ) begin 
+		// don't do this for TRS80
+//			image_doubleside = 1'b1;
+//			image_sps = image_sectors >> 1'b1;
+//		end
+		
 		//if (image_hd) image_sps = image_sps >> 1'b1;
 
 		// spt : 10
-		case (image_sps)
-			350 : image_spt = 5'd10;	// SD Floppy - 35 tracks
-			400 : image_spt = 5'd10;	// SD Floppy - 40 tracks
-			770 : image_spt = 5'd10;	// SD Floppy - 77 tracks
-			800 : image_spt = 5'd10;	// SD Floppy - 80 tracks
-			default : image_spt = 5'd10;
-		endcase;
+		//case (image_sps)
+		//	350 : image_spt = 5'd10;	// SD Floppy - 35 tracks
+		//	400 : image_spt = 5'd10;	// SD Floppy - 40 tracks
+		//	770 : image_spt = 5'd10;	// SD Floppy - 77 tracks
+		//	800 : image_spt = 5'd10;	// SD Floppy - 80 tracks
+		//	default : image_spt = 5'd10;
+		//endcase;
+		image_spt = 5'd10;
 
 		//if (image_hd) image_spt = image_spt << 1'b1;
 
 		// SECTOR_GAP_LEN = BPT/SPT - (SECTOR_LEN + SECTOR_HDR_LEN) = 6250/SPT - (512+6)
-		case (image_spt)
+		// case (image_spt)
 			//5'd9, 5'd18: image_gap_len = 10'd176;
 			//5'd10,5'd20: image_gap_len = 10'd107;
 			//5'd11,5'd22: image_gap_len = 10'd50;
-			default : image_gap_len = 10'd1;
-		endcase;
-	end
+			// default : image_gap_len = 10'd1;
+		//endcase;
+		image_gap_len = 10'd1;
+//	end
 end
 
 always @(posedge clk_sys) begin
@@ -196,6 +202,7 @@ always @(posedge clk_sys) begin
 	img_mountedD <= img_mounted;
 	if (~img_mountedD[0] && img_mounted[0]) begin
 		floppy_ready[0] <= |img_size;
+		mounted_size[0] <= img_size[31:9] ;
 		sector_len[0] <= sector_size;
 		spt[0] <= image_spt;
 		gap_len[0] <= image_gap_len;
@@ -204,6 +211,7 @@ always @(posedge clk_sys) begin
 	end
 	if (~img_mountedD[1] && img_mounted[1]) begin
 		floppy_ready[1] <= |img_size;
+		mounted_size[1] <= img_size[31:9] ;
 		sector_len[1] <= sector_size;
 		spt[1] <= image_spt;
 		gap_len[1] <= image_gap_len;
@@ -261,6 +269,7 @@ end
 // -------------------------------------------------------------------------
 wire fd0_index;
 wire fd0_ready;
+wire fd0_HLD;
 wire [7:0] fd0_track;
 wire [4:0] fd0_sector;
 wire fd0_sector_hdr;
@@ -291,6 +300,7 @@ floppy #(.SYS_CLK(SYS_CLK)) floppy0 (
 	.sector      ( fd0_sector      ),
 	.sector_hdr  ( fd0_sector_hdr  ),
 	.sector_data ( fd0_sector_data ),
+	.HLD       	 ( fd0_HLD         ),
 	.ready       ( fd0_ready       ),
 	.index       ( fd0_index       )
 );
@@ -300,6 +310,7 @@ floppy #(.SYS_CLK(SYS_CLK)) floppy0 (
 // -------------------------------------------------------------------------
 wire fd1_index;
 wire fd1_ready;
+wire fd1_HLD;
 wire [7:0] fd1_track;
 wire [4:0] fd1_sector;
 wire fd1_sector_hdr;
@@ -330,6 +341,7 @@ floppy #(.SYS_CLK(SYS_CLK)) floppy1 (
 	.sector      ( fd1_sector      ),
 	.sector_hdr  ( fd1_sector_hdr  ),
 	.sector_data ( fd1_sector_data ),
+	.HLD       	 ( fd1_HLD         ),
 	.ready       ( fd1_ready       ),
 	.index       ( fd1_index       )
 );
@@ -342,9 +354,14 @@ wire fd_index =        (!floppy_drive[0])?fd0_index:
                        (!floppy_drive[1])?fd1_index:
                        1'b0;
 
+wire fd_HLD =          (!floppy_drive[0])?fd0_HLD:
+                       (!floppy_drive[1])?fd1_HLD:
+                       1'b0;
+
 wire fd_ready =        (!floppy_drive[0])?fd0_ready:
                        (!floppy_drive[1])?fd1_ready:
                        1'b0;
+
 
 wire [7:0] fd_track =  (!floppy_drive[0])?fd0_track:
                        (!floppy_drive[1])?fd1_track:
@@ -367,6 +384,11 @@ wire fd_dclk_en =      (!floppy_drive[0])?fd0_dclk:
                        (!floppy_drive[1])?fd1_dclk:
                        1'b0;
 
+wire [22:0] mntd_size = (!floppy_drive[0])?mounted_size[0]:
+                       (!floppy_drive[1])?mounted_size[1]:
+                       23'd0;							  
+							  
+							  
 wire fd_doubleside =   (!floppy_drive[0])?doubleside[0]:doubleside[1];
 wire [4:0]  fd_spt =   (!floppy_drive[0])?spt[0]:spt[1];
 
@@ -407,7 +429,7 @@ reg [31:0] delay_cnt;
 
 // flag indicating that a delay is in progress
 (* preserve *) wire delaying = (delay_cnt != 0);
-wire seeking = (cmd[7:4] == 4'b0001);
+// wire seeking = (cmd[7:4] == 4'b0001);
 
 reg [7:0] step_to;
 reg RNF;
@@ -418,17 +440,16 @@ reg track_clear_strobe;
 reg sector_not_found;
 // Status fields that change based on DAM and 
 wire sector_read = cmd[7:5] == 3'b100 ? 1'b1 : 1'b0;
-wire sector_write = cmd[7:5] == 3'b101 ? 1'b1 : 1'b0;
+// wire sector_write = cmd[7:5] == 3'b101 ? 1'b1 : 1'b0;
 reg set_irq_clr;
 reg notready_wait;
 reg [1:0] seek_state /* synthesis keep */;
 reg read_bf_write;
 reg reset_cpuptr;
 
+reg data_transfer_can_start;  // so it can be wired into the debug spare register
+
 always @(posedge clk_sys) begin
-	reg data_transfer_can_start;
-	
-	
 	reg irq_at_index;
 
 	sector_inc_strobe <= 1'b0;
@@ -453,6 +474,9 @@ always @(posedge clk_sys) begin
 		irq_at_index <= 1'b0;
 		read_bf_write <= 1'b0;
 		reset_cpuptr <= 1'b0;
+		had_err_2 <= 1'b0 ;
+		had_err_4 <= 1'b0 ;
+
 	end else if (clk_cpu) begin
 		sd_card_read <= 0;
 		sd_card_write <= 0;
@@ -471,6 +495,7 @@ always @(posedge clk_sys) begin
 			busy <= 1'b1;
 			notready_wait <= 1'b0;
 			sector_not_found <= 1'b0;
+			RNF <= 0 ;
 			read_bf_write <= 1'b0;
 
 			if(cmd_type_1 || cmd_type_2 || cmd_type_3) begin
@@ -489,12 +514,12 @@ always @(posedge clk_sys) begin
 		end
 
 		// Disable busy mode if select changes
-		if(select_change) busy <= 1'b0;
-		else begin		
+		if(select_change) begin
+			busy <= 1'b0;
+		end else begin		
 			// execute command if motor is not supposed to be running or
-			// wait for motor spinup to finish
+			// wait for motor spinup to finish	    
 			if(busy && fd_ready && !delaying) begin
-
 				// ------------------------ TYPE I -------------------------
 				if(cmd_type_1) begin
 					// evaluate command
@@ -569,13 +594,12 @@ always @(posedge clk_sys) begin
 
 					// finish
 					3: begin
-						begin
 							busy <= 1'b0;
 							//motor_timeout_index <= MOTOR_IDLE_COUNTER - 1'd1;
 							irq_set <= 1'b1; // emit irq when command done
 							seek_state <= 0;
+							if (track != fd_track) RNF <= 1 ; // seek error
 						end
-					end
 					endcase
 				end // if (cmd_type_1)
 
@@ -587,7 +611,6 @@ always @(posedge clk_sys) begin
 							delay_cnt <= 16'd6*CLK_EN;
 							notready_wait <= 1'b1;
 						end else begin
-							RNF <= 1'b1;
 							busy <= 1'b0;
 							//motor_timeout_index <= MOTOR_IDLE_COUNTER - 1'd1;
 							irq_set <= 1'b1; // emit irq when command done
@@ -604,10 +627,11 @@ always @(posedge clk_sys) begin
 						// read sector
 					end else begin
 						if(cmd[7:5] == 3'b100) begin
-							if ((sector - SECTOR_BASE) >= fd_spt) begin
+						   // RNF if sector incorrect OR track not aligned OR lba past EOF
+							if (((sector - SECTOR_BASE) >= fd_spt) || (track != fd_track) || (sd_lba[22:0] >= mntd_size) ) begin
 								// wait 5 rotations (1 sec) before setting RNF
-								sector_not_found <= 1'b1;
-								delay_cnt <= 24'd1000 * CLK_EN;
+								sector_not_found <= 1'b1;  // FLYNN test with 100ms, because motor will turn off before this ends, which is bad.
+								delay_cnt <= 24'd100 * CLK_EN;
 							end else begin
 								if (fifo_cpuptr == 0) sd_card_read <= 1;
 								// we are busy until the right sector header passes under 
@@ -618,7 +642,7 @@ always @(posedge clk_sys) begin
 								if(fd_ready && data_transfer_can_start) begin
 									data_transfer_can_start <= 0;
 									data_transfer_start <= 1;
-								end
+							end
 
 								if(data_transfer_done) begin
 									if (cmd[4]) sector_inc_strobe <= 1'b1; // multiple sector transfer
@@ -634,10 +658,10 @@ always @(posedge clk_sys) begin
 
 						// write sector
 						if(cmd[7:5] == 3'b101) begin
-							if ((sector - SECTOR_BASE) >= fd_spt) begin
+							if (((sector - SECTOR_BASE) >= fd_spt) || (track != fd_track)) begin
 								// wait 5 rotations (1 sec) before setting RNF
 								sector_not_found <= 1'b1;
-								delay_cnt <= 24'd1000 * CLK_EN;
+								delay_cnt <= 24'd100 * CLK_EN;
 							end else begin
 								// Read before write handling for 256 byte sectors
 								if (sector_size_code == 2'b01) begin
@@ -724,6 +748,8 @@ always @(posedge clk_sys) begin
 			//if(motor_spin_up_sequence != 0)
 				//motor_spin_up_sequence <= motor_spin_up_sequence - 4'd1;
 		end
+		had_err_2 <= (select_change) ? 1'b0 : had_err_2 || data_lost ;
+		had_err_4 <= (select_change) ? 1'b0 : had_err_4 || RNF ;
 	end
 end
 
@@ -738,13 +764,13 @@ reg data_transfer_done;
 // controller. The internal transfer afterwards then runs at 250000 Bit/s
 reg  [9:0] fifo_cpuptr;
 wire [7:0] fifo_q;
-reg        s_odd; //odd sector
+// reg        s_odd; //odd sector
 reg  [8:0] fifo_sdptr;
 
 always @(*) begin
-	if (sector_size_code == 3)
-		fifo_sdptr = { s_odd, sd_buff_addr };
-	else
+//	if (sector_size_code == 3)
+//		fifo_sdptr = { s_odd, sd_buff_addr };
+//	else
 		fifo_sdptr = sd_buff_addr;
 end
 
@@ -790,7 +816,7 @@ always @(posedge clk_sys) begin
 	case (sd_state)
 	SD_IDLE:
 	begin
-		s_odd <= 1'b0;
+		// s_odd <= 1'b0;
 		if (~sd_card_readD & sd_card_read) begin
 			sd_rd <= ~{ floppy_drive[1], floppy_drive[0] };
 			sd_state <= SD_READ;
@@ -819,11 +845,13 @@ end
 
 // -------------------- CPU data read/write -----------------------
 reg [10:0] data_transfer_cnt /* synthesis keep */;
+reg [7:0] drq_count ; // allow some wait states if data_lost arises
+reg [7:0] drq_count_debug ; 
 
 always @(posedge clk_sys) begin
 	reg        data_transfer_startD;
 	
-
+	if(!floppy_reset) drq_count_debug <= 0 ;
 	// reset fifo read pointer on reception of a new command or 
 	// when multi-sector transfer increments the sector number
 	if(cmd_rx || sector_inc_strobe || reset_cpuptr) begin
@@ -836,7 +864,7 @@ always @(posedge clk_sys) begin
 	data_transfer_startD <= data_transfer_start;
 	// received request to read data
 	if(~data_transfer_startD & data_transfer_start) begin
-
+		drq_count <= 0 ;
 		// read_address command has 6 data bytes
 		if(cmd[7:4] == 4'b1100)
 			data_transfer_cnt <= 11'd6+11'd1;
@@ -850,63 +878,72 @@ always @(posedge clk_sys) begin
 	if(cmd[7:5] == 3'b101 && data_in_strobe) fifo_cpuptr <= fifo_cpuptr + 1'd1;
 
 	if(fd_dclk_en) begin
-		if(data_transfer_cnt != 0) begin
-			if(data_transfer_cnt != 1) begin
-				data_lost <= 1'b0;
-				if (drq) data_lost <= 1'b1;
-				drq_set <= 1'b1;
-
-				// read_address
-				if(cmd[7:4] == 4'b1100) begin
-					case(data_transfer_cnt)
-						7: data_out <= fd_track;
-						6: data_out <= 8'b00000000;
-						5: data_out <= fd_sector;
-						4: data_out <= sector_size_code; // TODO: sec size 0=128, 1=256, 2=512, 3=1024
-						3: data_out <= 8'ha5;
-						2: data_out <= 8'h5a;
-					endcase // case (data_read_cnt)
+		if(data_transfer_cnt != 0) begin 
+		   if (drq) begin
+				if (drq_count == 8'd20) begin
+					data_lost <= 1'b1 ;
+					drq_set <= 1'b1;
+				end else begin
+					  drq_count <= drq_count + 8'd1 ;
+					  if (drq_count > drq_count_debug) drq_count_debug <= drq_count ;
 				end
+			end else begin
+				if(data_transfer_cnt != 1) begin
+					data_lost <= 1'b0;
+					// if (drq) data_lost <= 1'b1;      // this can never happen here
+					drq_set <= 1'b1;
 
-				// read sector
-				if(cmd[7:5] == 3'b100) begin
-					if(fifo_cpuptr != sector_size) begin
-						data_out <= fifo_q;
-						fifo_cpuptr <= fifo_cpuptr + 1'd1;
+					// read_address
+					if(cmd[7:4] == 4'b1100) begin
+						case(data_transfer_cnt)
+							7: data_out <= fd_track;
+							6: data_out <= 8'b00000000;
+							5: data_out <= fd_sector;
+							4: data_out <= sector_size_code; // TODO: sec size 0=128, 1=256, 2=512, 3=1024
+							3: data_out <= 8'ha5;
+							2: data_out <= 8'h5a;
+						endcase // case (data_read_cnt)
+					end
+
+					// read sector
+					if(cmd[7:5] == 3'b100) begin
+						if(fifo_cpuptr != sector_size) begin
+							data_out <= fifo_q;
+							fifo_cpuptr <= fifo_cpuptr + 1'd1;
+						end
 					end
 				end
+				// count down and stop after last byte
+				data_transfer_cnt <= data_transfer_cnt - 11'd1;
+				if(data_transfer_cnt == 1) data_transfer_done <= 1'b1;
 			end
-
-			// count down and stop after last byte
-			data_transfer_cnt <= data_transfer_cnt - 11'd1;
-			if(data_transfer_cnt == 1)
-				data_transfer_done <= 1'b1;
 		end
 	end
 end
 
 // Different logic for fdc1771 status register
-logic s6, s5, s4, s2, s1;
+logic s7, s6, s5, s4, s2, s1, s0;
 always_comb
 begin
+	s7 = !fd_ready | notready_wait ;
 	if(!floppy_present) begin		// Pull-ups if no disk attached
 		s6 = 1'b0;
 		s5 = 1'b1;
 		s4 = 1'b0;
 		s2 = 1'b1;
 		s1 = 1'b1;
+		s0 = 1'b0;
 	end
 	else begin
 		if(cmd_type_2) begin
 			if(sector_read) begin
 				s6 = 1'b0;
-				s5 = (fd_track==8'd17 ? 1'b1 : 1'b0);	// DIR=F8, NORM=FB
+				s5 = (track==8'd17 ? 1'b1 : 1'b0);	// DIR=F8, NORM=FB FLYNN: replace fd_track by track
 			end 
 			else begin	// else sector write
 				s6 = floppy_write_protected;
 				s5 = 1'b0;
 			end
-			s4 = !floppy_present; //s4 = RNF;
 			s2 = data_lost;
 			s1 = drq;
 		end 
@@ -914,17 +951,21 @@ begin
 			if(cmd[7:4] == 4'b1111) s6 = floppy_write_protected;	// write track
 			else s6 = 1'b0;
 			s5 = 1'b0;
-			s4 = !floppy_present; //1'b0;
 			s2 = data_lost;
 			s1 = drq;
 		end
 		else begin //cmd_type_1,4 or unknown state
 			s6 = floppy_write_protected;
-			s5 = fd_ready; 	// LDOS fix
-			s4 = !floppy_present; //s4 = RNF;
+//			s5 = fd_ready; 	// LDOS fix
+// 	Symptom : command 'BOOT' in a DO JCL file gets to non-disk "READY?" state reboot, because @ addr X'696' the status @37EC is 
+//    checked to be 0xFF or 0x00 (A+1<2 : add a,1;cp A,2;jp c,0x75), and it pretty well could happend in normal operation
+//    So we need to make sure the status never gets to be all zeroes. I am just surprised that it is suffisant to do so in cmd_type_1 state
+			s5 = fd_HLD || ~(s1||s2||s4||s6||s7);   	// LDOS fix and more ROM BOOT fix if jmp 0 done from an non-reset state.
 			s2 = fd_track0;
 			s1 = ~fd_index;
 		end
+		s4 = (!floppy_present) || RNF; //s4 = RNF; which stands for seek error too
+		s0 = busy ;
 	end
 end
 
@@ -932,14 +973,14 @@ end
 //wire s5 = cmd_type_1 ? ~&floppy_drive : sector_read ? (track==8'd17 ? 1'b1 : 1'b0) : motor_on;
 //wire s4 = sector_not_found;
 // the status byte
-wire [7:0] status = {!motor_on | notready_wait, 
+wire [7:0] status = { s7, 
 		      s6,              
 		      s5,  				
 		      s4,               // record not found
 		      1'b0,                                // crc error
 		      s2,
 		      s1,
-		      busy }; /* synthesis keep */
+		      s0 }; // busy /* synthesis keep */
 
 reg [7:0] track; /* verilator public */
 reg [7:0] sector;
@@ -956,7 +997,10 @@ wire cmd_type_1 = (cmd[7] == 1'b0);
 wire cmd_type_2 = (cmd[7:6] == 2'b10);
 wire cmd_type_3 = (cmd[7:5] == 3'b111) || (cmd[7:4] == 4'b1100);
 wire cmd_type_4 = (cmd[7:4] == 4'b1101);
-assign fdc_new_command = cmd_rx_i;
+assign fdc_new_command = cmd_rx; //FLYNN cmd_rx_i
+
+reg had_err_2 ;  // debug latch to memorize RNF errors
+reg had_err_4 ;  // debug latch to memorize SEEK errors
 
 // output debugging info
 assign cmd_out = cmd;
@@ -964,6 +1008,11 @@ assign track_out = track;
 assign sector_out = sector;
 assign data_in_out = data_in;
 assign status_out = status;
+// assign spare_out = { data_transfer_done, data_transfer_cnt } ;
+// assign spare_out = { 4'd0,  
+//				sector_not_found, sd_card_done, sd_rd, 
+//				sd_card_read, data_transfer_done, data_transfer_can_start, data_transfer_start } ;
+assign spare_out = { had_err_2, had_err_4, controller_type, fd_track != track, drq_count_debug } ;
 
 localparam FDC_REG_CMDSTATUS    = 0;
 localparam FDC_REG_TRACK        = 1;
@@ -993,7 +1042,7 @@ end
 
 // cpu register write
 reg cmd_rx /* verilator public */;
-reg cmd_rx_i;
+// reg cmd_rx_i;
 reg data_in_strobe;
 reg trsdd_enable;	// TRS-Disk Doubler
 
@@ -1005,7 +1054,7 @@ always @(posedge clk_sys) begin
 		sector <= 8'h00;
 
 		// reset state machines and counters
-		cmd_rx_i <= 1'b0;
+		// cmd_rx_i <= 1'b0;
 		cmd_rx <= 1'b0;
 		data_in_strobe <= 0;
 		trsdd_enable <= 1'b0;
@@ -1014,16 +1063,17 @@ always @(posedge clk_sys) begin
 
 		// cmd_rx is delayed to make sure all signals (the cmd!) are stable when
 		// cmd_rx is evaluated
-		cmd_rx <= cmd_rx_i;
+	//	cmd_rx <= cmd_rx_i;    // FLYNN : I removed this cmd_rx_i delay, since I sincerely don't get it. I kept it commented out to put it back easely if needed
 
 		// command reception is ack'd by fdc going busy
-		if((!cmd_type_4 && busy) || (clk_cpu && cmd_type_4 && !busy)) cmd_rx_i <= 1'b0;
+		if((!cmd_type_4 && busy) || (clk_cpu && cmd_type_4 && !busy)) cmd_rx <= 1'b0; // FLYNN cmd_rx_i
 
 		// only react if stb just raised
 		if(cpu_we) begin
 			if(cpu_addr == FDC_REG_CMDSTATUS) begin       // command register
 				cmd <= cpu_din;
-				cmd_rx_i <= 1'b1;
+				// FLYNN2 cmd_rx_i <= 1'b1;
+				cmd_rx <= 1'b1;
 				// ------------- TYPE I commands -------------
 				if(cpu_din[7:4] == 4'b0000) begin               // RESTORE
 					step_to <= 8'd0;
@@ -1069,8 +1119,8 @@ always @(posedge clk_sys) begin
 				track <= cpu_din;
 
 			if(cpu_addr == FDC_REG_SECTOR) begin
-				if(cpu_din == 8'h80) trsdd_enable=1'b1;	// Enable DD
-				if(cpu_din == 8'ha0) trsdd_enable=1'b0;	// Enable SD
+	//			if(cpu_din == 8'h80) trsdd_enable=1'b1;	// Enable DD
+	//			if(cpu_din == 8'ha0) trsdd_enable=1'b0;	// Enable SD
 				// ignore codes to enable / disable precomp
 				sector <= {1'b0, cpu_din[6:0]};	// Strip top bit
 			end                  // sector register
@@ -1082,8 +1132,8 @@ always @(posedge clk_sys) begin
 		end
 
 		if (sector_inc_strobe) sector <= sector + 1'd1;
-		if (track_inc_strobe) track <= track + 8'd1;
-		if (track_dec_strobe) track <= track - 8'd1;
+		if (track_inc_strobe) if (track != 8'hff) track <= track + 8'd1; // note : allow to go over 240, so "seek" always completes.
+		if (track_dec_strobe) if (track != 0) track <= track - 8'd1;
 		if (track_clear_strobe) track <= 8'd0;
 	end
 end
