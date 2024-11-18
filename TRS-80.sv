@@ -7,6 +7,8 @@
 //
 //============================================================================
 
+localparam NBDRIV=4;
+
 module emu
 (
 	//Master input clock
@@ -198,6 +200,8 @@ localparam CONF_STR = {
 	"TRS-80;;",
 	"S0,DSKJV1,Mount Disk 0:;",
  	"S1,DSKJV1,Mount Disk 1:;",
+ 	"S2,DSKJV1,Mount Disk 2:;",
+ 	"S3,DSKJV1,Mount Disk 3:;",
 	"-;",
 	"F2,CMD,Load Program;",
 	"F1,CAS,Load Cassette;",
@@ -216,6 +220,7 @@ localparam CONF_STR = {
 	"OAB,TRISSTICK,None,BIG5,ALPHA;",
 	"O89,Clockspeed (MHz),1.78(1x),3.56(2x),5.34(3x),21.29(12x);",
 	"-;",
+	"RG,Hard reset (Erase memory);",
 	"R0,Reset;",
 	"J,Fire;",
 	"V,v",`BUILD_DATE
@@ -237,17 +242,17 @@ wire [15:0] ioctl_addr;
 wire  [7:0] ioctl_data;
 wire  [7:0] ioctl_index;
 wire	    ioctl_wait;
-wire [31:0] sd_lba[2];
+wire [31:0] sd_lba[NBDRIV];
 wire [31:0] sd_lba_0;
-wire  [1:0] sd_rd;
-wire  [1:0] sd_wr;
-wire  [1:0] sd_ack;
+wire  [3:0] sd_rd;
+wire  [3:0] sd_wr;
+wire  [3:0] sd_ack;
 wire  [8:0] sd_buff_addr;
 wire  [7:0] sd_buff_dout;
 wire  [7:0] sd_buff_din_0;
-wire  [7:0] sd_buff_din[2];
+wire  [7:0] sd_buff_din[NBDRIV];
 wire        sd_buff_wr;
-wire  [1:0] img_mounted;
+wire  [3:0] img_mounted;
 wire        img_readonly;
 wire [63:0] img_size;
 
@@ -293,7 +298,7 @@ joy_db15 joy_db15
   .joystick2 ( JOYDB15_2 )	  
 );
 
-hps_io #(.CONF_STR(CONF_STR), .WIDE(0), .VDNUM(2) ) hps_io
+hps_io #(.CONF_STR(CONF_STR), .WIDE(0), .VDNUM(NBDRIV) ) hps_io
 (
 	.clk_sys(clk_sys),
 	.HPS_BUS(HPS_BUS),
@@ -347,6 +352,7 @@ cmd_loader cmd_loader
 (
 	.clock(clk_sys),
 	.reset(reset),
+	.erase_mem(status[16]),
 
 	.ioctl_download(ioctl_download),
 	.ioctl_wr(ioctl_wr),
@@ -435,7 +441,7 @@ trs80 trs80
 	.sd_lba(sd_lba_0),
 	.sd_rd(sd_rd),
 	.sd_wr(sd_wr),
-	.sd_ack(sd_ack[0]|sd_ack[1]),
+	.sd_ack(sd_ack[0]|sd_ack[1]|sd_ack[2]|sd_ack[3]),
 	.sd_buff_addr(sd_buff_addr),
 	.sd_buff_dout(sd_buff_dout),
 	.sd_buff_din(sd_buff_din_0),
@@ -443,10 +449,15 @@ trs80 trs80
 
 );
 
+
 assign sd_buff_din[0]=sd_buff_din_0;
 assign sd_buff_din[1]=sd_buff_din_0;
+assign sd_buff_din[2]=sd_buff_din_0;
+assign sd_buff_din[3]=sd_buff_din_0;
 assign sd_lba[0]=sd_lba_0;
 assign sd_lba[1]=sd_lba_0;
+assign sd_lba[2]=sd_lba_0;
+assign sd_lba[3]=sd_lba_0;
 
 
 ///////////////////////////////////////////////////
