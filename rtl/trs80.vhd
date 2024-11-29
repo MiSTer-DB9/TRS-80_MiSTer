@@ -72,14 +72,17 @@ Port (
 	lcasetype  : in  STD_LOGIC;
 	overscan   : in  STD_LOGIC_VECTOR(1 downto 0);
 	overclock  : in  STD_LOGIC_VECTOR(1 downto 0);
-	flicker	   : in  STD_LOGIC;
-	debug	   : in  STD_LOGIC;
+	flicker	  : in  STD_LOGIC;
+	debug	     : in  STD_LOGIC;
+	other_debug	: in std_logic_vector(15 downto 0);
 
 	dn_clk     : in  std_logic;
 	dn_go      : in  std_logic;
 	dn_wr      : in  std_logic;
+	dn_rd		  : in  std_logic;
 	dn_addr    : in  std_logic_vector(24 downto 0);
 	dn_data    : in  std_logic_vector(7 downto 0);
+	dn_din	  : out std_logic_vector(7 downto 0);
 
 	loader_download : in std_logic;
 	execute_addr	: in std_logic_vector(15 downto 0);
@@ -96,8 +99,17 @@ Port (
 	sd_buff_addr   	: in std_logic_vector(8 downto 0);
 	sd_buff_dout   	: in std_logic_vector(7 downto 0);
 	sd_buff_din  	: out std_logic_vector(7 downto 0);
-	sd_dout_strobe 	: in std_logic
+	sd_dout_strobe 	: in std_logic;
 
+	UART_TXD       :out  std_logic;
+	UART_RXD       :in  std_logic;
+	UART_RTS       :out  std_logic;
+	UART_CTS       :in  std_logic;
+	UART_DTR       :out  std_logic;
+	UART_DSR       :in  std_logic;
+	
+	uart_mode	   :in std_logic_vector(7 downto 0);
+	uart_speed	   :in std_logic_vector(31 downto 0)
 );
 end trs80;
 
@@ -246,8 +258,34 @@ component fdc1771 is
 			sector_out		: out  std_logic_vector(7 downto 0);	
 			data_in_out		: out  std_logic_vector(7 downto 0);	
 			status_out		: out  std_logic_vector(7 downto 0);
-			spare_out		: out  std_logic_vector(11 downto 0)   -- spare for debugging other stuff FLYNN
+			spare_out		: out  std_logic_vector(15 downto 0)   -- spare for debugging other stuff FLYNN
 		);
+end component ;
+
+component m_rs232_uart is
+port (
+	reset      : in  std_logic;
+	clk42m     : in  std_logic;  -- 42.578Mhz
+
+   addr		  : in std_logic_vector(1 downto 0) ; -- address from CPU
+	cs_n		  : in  std_logic; -- chip select 0xE8
+	iow_n		  : in std_logic;  -- io write
+	ior_n		  : in std_logic;  -- io read
+	DO			  : out std_logic_vector(7 downto 0) ;
+	DI			  : in std_logic_vector(7 downto 0) ;
+	
+	uart_mode  : in std_logic_vector(7 downto 0);
+	speed		  : in  std_logic_vector (31 downto 0) ;
+	
+ 	UART_TXD   : out  std_logic;
+	UART_RXD   : in  std_logic;
+	UART_RTS   : out  std_logic;
+	UART_CTS   : in  std_logic;
+	UART_DTR   : out  std_logic;
+	UART_DSR   : in  std_logic ;
+	
+	uart_debug : out std_logic_vector(11 downto 0)
+);
 end component ;
 
 signal ch_a  : std_logic_vector(7 downto 0);
@@ -283,7 +321,7 @@ signal dbg_track : std_logic_vector(7 downto 0);
 signal dbg_sector : std_logic_vector(7 downto 0);
 signal dbg_data_in : std_logic_vector(7 downto 0);
 signal dbg_status : std_logic_vector(7 downto 0);
-signal dbg_spare : std_logic_vector(11 downto 0);
+signal dbg_spare : std_logic_vector(15 downto 0);
 
 -- 0  1  2 3   4
 -- 28 14 7 3.5 1.75
@@ -368,6 +406,14 @@ signal fdc_motor_countdown : integer := 0;
 signal counter : std_logic_vector(31 downto 0) := (others => '0');  -- Used for debugging via SignalTap
 attribute noprune: boolean; 
 attribute noprune of counter: signal is true; -- set to false for RTL
+
+-- RS232 interconn.
+signal baud_sel : std_logic_vector(3 downto 0);
+signal clk_rs16 : std_logic ;
+signal rs232_cs : std_logic ;
+signal rs232_rd : std_logic ;
+signal rs232_out : std_logic_vector(7 downto 0);
+signal uart_debug : std_logic_vector(11 downto 0);
 
 begin
 
@@ -626,6 +672,8 @@ fdc_sel2 <= (fdc_rd xor fdc_wr);
 floppy_select_write <= '1' when cpua(15 downto 2)="00110111111000" and memw='0' else '0';
 irq_latch_read <= '1' when cpua(15 downto 0)=x"37e0" and memr='0' else '0';
 expansion_irq <= clk_25ms_latch and fdc_irq_latch;
+rs232_cs <= '0' when cpua(7 downto 2)=x"3a" else '1'; -- in ports $E8 to $EB
+rs232_rd <= rs232_cs or ior;
 
 -- Holmes Sprinter FDC override speed
 process(clk42m, reset)
@@ -690,6 +738,7 @@ cpudi <= vramdo when vramsel='1' else												-- RAM		($3C00-$3FFF)
          "11111111" when ior='0' and cpua(7 downto 0)=x"00" and joytype(1 downto 0) = "00" else					-- no joystick = empty port
 
          tapelatch & "111" & widemode & tapebits	when ior='0' and cpua(7 downto 0)=x"ff" else					-- cassette data
+			rs232_out when rs232_rd='0' else 
 			
 			x"ff"  when ior='0' else													-- all unassigned ports
 
@@ -815,13 +864,23 @@ begin
 		elsif (dbugmsg_addr = 41) then							
 			dbugmsg_data <= x"78";				-- x
 		elsif (dbugmsg_addr = 42) then
-			dbugmsg_data <= hex(conv_integer(dbg_spare(11 downto 8)));
+--			dbugmsg_data <= hex(conv_integer(dbg_spare(15 downto 11)));
+--			dbugmsg_data <= hex(conv_integer(uart_debug(15 downto 11)));
+			dbugmsg_data <= hex(conv_integer(other_debug(15 downto 12)));
 		elsif (dbugmsg_addr = 43) then
-			dbugmsg_data <= hex(conv_integer(dbg_spare(7 downto 4)));
+--			dbugmsg_data <= hex(conv_integer(dbg_spare(11 downto 8)));
+--			dbugmsg_data <= hex(conv_integer(uart_debug(11 downto 8)));
+			dbugmsg_data <= hex(conv_integer(other_debug(11 downto 8)));
 		elsif (dbugmsg_addr = 44) then							
-			dbugmsg_data <= hex(conv_integer(dbg_spare(3 downto 0)));
+--			dbugmsg_data <= hex(conv_integer(dbg_spare(7 downto 4)));
+--			dbugmsg_data <= hex(conv_integer(uart_debug(7 downto 4)));
+			dbugmsg_data <= hex(conv_integer(other_debug(7 downto 4)));
+		elsif (dbugmsg_addr = 45) then							
+--			dbugmsg_data <= hex(conv_integer(dbg_spare(3 downto 0)));
+--			dbugmsg_data <= hex(conv_integer(uart_debug(3 downto 0)));
+			dbugmsg_data <= hex(conv_integer(other_debug(3 downto 0)));
 			
-		elsif (dbugmsg_addr = 46) then			-- Tick Counter (after space)
+		elsif (dbugmsg_addr = 47) then			-- Tick Counter (after space)
 			if(tick_1s='0') then
 				dbugmsg_data <= x"20";
 			else
@@ -979,8 +1038,10 @@ port map
 	b_dout => ram_b_dout
 );
 
-ram_a_addr <= dn_addr(16 downto 0) when dn_wr = '1' else io_ram_addr(16 downto 0);
+ram_a_addr <= dn_addr(16 downto 0) when dn_wr='1' or dn_rd='1' else io_ram_addr(16 downto 0);
 ram_b_addr <= io_ram_addr(16 downto 0) when iorrd='1' else ('0' & cpua);
+dn_din <= ram_a_dout ;
+-- dn_din <= ram_a_addr(16) & ram_a_addr(6 downto 0) ; -- test
 
 process (clk42m,dn_go,loader_download,reset)
 begin
@@ -1105,5 +1166,34 @@ begin
 		end if;
 	end if;
 end process;
+
+rs232_uart: m_rs232_uart
+port map
+(
+	reset  => reset,
+	clk42m =>  clk42m,   
+
+   addr	=>	 cpua(1 downto 0), 
+	cs_n	=>  rs232_cs,	  
+	iow_n	=> iow,	  
+	ior_n => ior,
+	DO	=> rs232_out,
+	DI	=>	cpudo,
+
+	uart_mode  => uart_mode,
+	speed		=>  uart_speed,
+	
+ 	UART_TXD   => UART_TXD,
+	UART_RXD   => UART_RXD, 
+	UART_RTS   => UART_RTS,
+	UART_CTS   => UART_CTS,
+	UART_DTR   => UART_DTR,
+	UART_DSR   => UART_DSR,
+	
+	uart_debug => uart_debug
+) ;
+
+
+
 
 end Behavioral;
