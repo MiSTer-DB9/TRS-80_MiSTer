@@ -182,7 +182,8 @@ assign       USER_OUT  = JOY_FLAG[2] ? {3'b111,JOY_SPLIT,3'b111,JOY_MDSEL} : JOY
 assign       USER_MODE = JOY_FLAG[2:1] ;
 assign       USER_OSD  = joydb_1[10] & joydb_1[6];
 
-assign {DDRAM_CLK, DDRAM_BURSTCNT, DDRAM_ADDR, DDRAM_DIN, DDRAM_BE, DDRAM_RD, DDRAM_WE} = 0;
+// assign {DDRAM_CLK, DDRAM_BURSTCNT, DDRAM_ADDR, DDRAM_DIN, DDRAM_BE, DDRAM_RD, DDRAM_WE} = 0;
+assign DDRAM_CLK =  clk_sys ;
 assign ADC_BUS  = 'Z;
 assign {SDRAM_DQ, SDRAM_A, SDRAM_BA, SDRAM_CLK, SDRAM_CKE, SDRAM_DQML, SDRAM_DQMH, SDRAM_nWE, SDRAM_nCAS, SDRAM_nRAS, SDRAM_nCS} = 'Z;
 
@@ -195,17 +196,29 @@ assign LED_DISK  = LED;				/* later add disk motor on/off */
 assign LED_POWER = 0;
 assign LED_USER  = ioctl_download;
 
+// Status Bit Map:
+//             Upper                             Lower              
+// 0         1         2         3          4         5         6   
+// 01234567890123456789012345678901 23456789012345678901234567890123
+// 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV
+// XXXXXXXXXXXXXXXXXXXXX
+
 `include "build_id.v"
 localparam CONF_STR = {
-	"TRS-80;UART19200:9600:4800:2400:1200:300:110;",
+	"TRS-80;SS3E000000:10000,UART19200:9600:4800:2400:1200:300:110;",
 	"S0,DSKJV1,Mount Disk 0:;",
  	"S1,DSKJV1,Mount Disk 1:;",
  	"S2,DSKJV1,Mount Disk 2:;",
  	"S3,DSKJV1,Mount Disk 3:;",
 	"-;",
-//	"F3,*,Upload File(s);",
+//	"F4,*,Upload File(s);",
 	"F2,CMDBAS,Load Program;",
 	"F1,CAS,Load Cassette;",
+	"-;",
+	"FS3,SAV,Snapshot;",
+	"OJK,Savestate Slot,1,2,3,4;",
+	"RH,Load State;",
+	"RI,Save State;",
 	"-;",
 	"O56,Screen Color,White,Green,Amber;",
 	"OE,Video Flicker,Off,On;",
@@ -237,6 +250,7 @@ pll pll
 
 wire [31:0] status;
 wire  [1:0] buttons;
+wire			cpum1;
 wire        ioctl_download;
 wire        ioctl_wr;
 wire [15:0] ioctl_addr;
@@ -265,7 +279,6 @@ wire [21:0] gamma_bus;
 wire [15:0] joystick_0_USB, joystick_1_USB;
 wire [31:0] uart_speed;
 wire [7:0] uart_mode;
-wire [15:0] other_debug ;
 
 
 // F4 F3 F2 F1 U D L R 
@@ -360,6 +373,7 @@ cmd_loader cmd_loader
 (
 	.clock(clk_sys),
 	.reset(reset),
+	.cpum1(cpum1),
 	.erase_mem(status[16]),
 
 	.ioctl_download(ioctl_download),
@@ -369,7 +383,6 @@ cmd_loader cmd_loader
 	.ioctl_index(ioctl_index),
 	.ioctl_wait(ioctl_wait),
 	
-	.loader_dbg(other_debug),
 	.loader_wr(loader_wr),
 	.loader_download(loader_download),
 	.loader_addr(loader_addr),
@@ -387,7 +400,7 @@ wire [23:0] trsram_addr;
 wire [7:0] trsram_data;
 wire [7:0] trsram_din;
 
-assign trsram_wr = loader_download ? loader_wr : ioctl_wr;
+assign trsram_wr = loader_download ? loader_wr : |ioctl_index[5:1]==1'b0 ?  ioctl_wr : 1'b0 ; // we don't want a spurious write if loader_download is late
 assign trsram_rd = loader_download ;
 assign trsram_download = loader_download ? loader_download : ioctl_index == 1 ? ioctl_download : 1'b0;
 assign trsram_addr = loader_download ? {8'b0, loader_addr} : {7'b0,|ioctl_index[5:0],ioctl_addr};
@@ -413,6 +426,7 @@ trs80 trs80
 (
 	.reset(reset),
 	.clk42m(clk_sys),
+	.cpum1_out(cpum1),
 
 	.joy0(joystick_0),
 	.joy1(joystick_1),
@@ -436,7 +450,6 @@ trs80 trs80
 	.overclock(status[9:8]),
 	.flicker(status[14]),
 	.debug(status[15]),
-	.other_debug(other_debug),
 	
 	.dn_clk(clk_sys),
 	.dn_go(trsram_download),
@@ -471,7 +484,23 @@ trs80 trs80
 	.UART_DSR(UART_DSR),
 	
 	.uart_mode(uart_mode),   // 0=None, 1=PPP or Modem, 2=Console, 3=MIDI 
-	.uart_speed(uart_speed)
+	.uart_speed(uart_speed),
+	
+	// .DDRAM_CLK(clk_sys),
+	.DDRAM_BUSY(DDRAM_BUSY),
+	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
+	.DDRAM_ADDR(DDRAM_ADDR),
+	.DDRAM_DOUT(DDRAM_DOUT),
+	.DDRAM_DOUT_READY(DDRAM_DOUT_READY),
+	.DDRAM_RD(DDRAM_RD),
+	.DDRAM_DIN(DDRAM_DIN),
+	.DDRAM_BE(DDRAM_BE),
+	.DDRAM_WE(DDRAM_WE),
+	
+	.load_state(status[17])	,
+	.save_state(status[18]),
+	.ss_slot(status[20:19])
+	
 );
 
 
