@@ -12,5 +12,3 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/fdc1771/fdc1771.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddram.sv
 set_global_assignment -name VERILOG_FILE rtl/fdc1771/floppy.v
 set_global_assignment -name SYSTEMVERILOG_FILE TRS-80.sv
-set_global_assignment -name VERILOG_FILE joydb9md.v
-set_global_assignment -name VERILOG_FILE joydb15.v
