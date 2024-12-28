@@ -167,21 +167,74 @@ module emu
 	input         OSD_STATUS
 );
 
+wire         CLK_JOY = CLK_50M & mt32_disable;         //Assign clock between 40-50Mhz
+wire   [2:0] JOY_FLAG = mt32_disable ? {db9md_ena,~db9md_ena,1'b0} : 3'b000;   //Assign 3 bits of status (31:29) o (63:61)
+wire         JOY_CLK, JOY_LOAD, JOY_SPLIT, JOY_MDSEL;
+wire   [5:0] JOY_MDIN  = JOY_FLAG[2] ? {USER_IN[6],USER_IN[3],USER_IN[5],USER_IN[7],USER_IN[1],USER_IN[2]} : '1;
+wire         JOY_DATA  = JOY_FLAG[1] ? USER_IN[5] : '1;
+//assign       USER_OUT  = JOY_FLAG[2] ? {3'b111,JOY_SPLIT,3'b111,JOY_MDSEL} : JOY_FLAG[1] ? {6'b111011,JOY_CLK,JOY_LOAD} : '1;
+assign       USER_MODE = JOY_FLAG[2:1] ;
+assign       USER_OSD  = JOY_DB1[10] & JOY_DB1[6];
+
+reg  db9md_ena=1'b0;
+reg  db9_1p_ena=1'b0,db9_2p_ena=1'b0;
+wire db9_status = db9md_ena ? 1'b1 : USER_IN[7];
+always @(posedge clk_sys) 
+ begin
+	if(~db9md_ena & ~db9_status) db9md_ena <= 1'b1; 
+   if(JOYDB9MD_1[2] || JOYDB15_1[2]) db9_1p_ena <= 1'b1;
+	if(~JOYDB9MD_1[2] && JOYDB9MD_2[2] || JOYDB15_2[2]) db9_2p_ena <= 1'b1; //Se niega el del player 1 por si no hay Splitter que no se duplique
+ end
+
+wire [15:0] JOY_DB1 = db9md_ena ? JOYDB9MD_1 : JOYDB15_1;
+wire [15:0] JOY_DB2 = db9md_ena ? JOYDB9MD_2 : JOYDB15_2;
+
+reg [15:0] JOYDB9MD_1,JOYDB9MD_2;
+joy_db9md joy_db9md
+(
+  .clk       ( CLK_JOY    ), //40-50MHz
+  .joy_split ( JOY_SPLIT  ),
+  .joy_mdsel ( JOY_MDSEL  ),
+  .joy_in    ( JOY_MDIN   ),
+  .joystick1 ( JOYDB9MD_1 ),
+  .joystick2 ( JOYDB9MD_2 )	  
+);
+
+reg [15:0] JOYDB15_1,JOYDB15_2;
+joy_db15 joy_db15
+(
+  .clk       ( CLK_JOY   ), //48MHz
+  .JOY_CLK   ( JOY_CLK   ),
+  .JOY_DATA  ( JOY_DATA  ),
+  .JOY_LOAD  ( JOY_LOAD  ),
+  .joystick1 ( JOYDB15_1 ),
+  .joystick2 ( JOYDB15_2 )	  
+);
+
+always_comb begin
+	USER_OUT    = 8'hFF; 
+	if( ~mt32_disable )begin
+		USER_OUT[6:0] = USER_OUT_MT32;
+	end else if (JOY_FLAG[1]) begin
+		USER_OUT[0] = JOY_LOAD;
+		USER_OUT[1] = JOY_CLK;
+		USER_OUT[6] = 1'b1;
+		USER_OUT[4] = 1'b1;
+	end else if (JOY_FLAG[2]) begin
+		USER_OUT[0] = JOY_MDSEL;
+		USER_OUT[1] = 1'b1;
+		USER_OUT[6] = 1'b1;
+		USER_OUT[4] = JOY_SPLIT;
+	end
+end
+
+wire [31:0] joystick_0 = db9_1p_ena ? JOY_DB1 : joystick_0_USB;
+wire [31:0] joystick_1 = db9_2p_ena ? JOY_DB2 : db9_1p_ena ? joystick_0_USB : joystick_1_USB;
+
 assign VGA_F1=0;
 assign HDMI_FREEZE = 0;
 assign VGA_SCALER  = 0;
 assign VGA_DISABLE = 0;
-
-// assign {UART_RTS, UART_TXD, UART_DTR} = 0;
-assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
-wire         CLK_JOY = CLK_50M;         //Assign clock between 40-50Mhz
-wire   [2:0] JOY_FLAG  = {status[30],status[31],status[29]}; //Assign 3 bits of status (31:29)
-wire         JOY_CLK, JOY_LOAD, JOY_SPLIT, JOY_MDSEL;
-wire   [5:0] JOY_MDIN  = JOY_FLAG[2] ? {USER_IN[6],USER_IN[3],USER_IN[5],USER_IN[7],USER_IN[1],USER_IN[2]} : '1;
-wire         JOY_DATA  = JOY_FLAG[1] ? USER_IN[5] : '1;
-assign       USER_OUT  = JOY_FLAG[2] ? {3'b111,JOY_SPLIT,3'b111,JOY_MDSEL} : JOY_FLAG[1] ? {6'b111111,JOY_CLK,JOY_LOAD} : '1;
-assign       USER_MODE = JOY_FLAG[2:1] ;
-assign       USER_OSD  = joydb_1[10] & joydb_1[6];
 
 // assign {DDRAM_CLK, DDRAM_BURSTCNT, DDRAM_ADDR, DDRAM_DIN, DDRAM_BE, DDRAM_RD, DDRAM_WE} = 0;
 assign DDRAM_CLK =  clk_sys ;
@@ -309,47 +362,12 @@ wire [31:0] uart_speed;
 wire [7:0] uart_mode;
 
 
-// F4 F3 F2 F1 U D L R 
-wire [31:0] joystick_0 = joydb_1ena ? (OSD_STATUS? 32'b000000 : joydb_1[7:0]) : joystick_0_USB;
-wire [31:0] joystick_1 = joydb_2ena ? (OSD_STATUS? 32'b000000 : joydb_2[7:0]) : joydb_1ena ? joystick_0_USB : joystick_1_USB;
-
-wire [15:0] joydb_1 = JOY_FLAG[2] ? JOYDB9MD_1 : JOY_FLAG[1] ? JOYDB15_1 : '0;
-wire [15:0] joydb_2 = JOY_FLAG[2] ? JOYDB9MD_2 : JOY_FLAG[1] ? JOYDB15_2 : '0;
-wire        joydb_1ena = |JOY_FLAG[2:1]              ;
-wire        joydb_2ena = |JOY_FLAG[2:1] & JOY_FLAG[0];
-
-//----BA 9876543210
-//----MS ZYXCBAUDLR
-reg [15:0] JOYDB9MD_1,JOYDB9MD_2;
-joy_db9md joy_db9md
-(
-  .clk       ( CLK_JOY    ), //40-50MHz
-  .joy_split ( JOY_SPLIT  ),
-  .joy_mdsel ( JOY_MDSEL  ),
-  .joy_in    ( JOY_MDIN   ),
-  .joystick1 ( JOYDB9MD_1 ),
-  .joystick2 ( JOYDB9MD_2 )	  
-);
-
-//----BA 9876543210
-//----LS FEDCBAUDLR
-reg [15:0] JOYDB15_1,JOYDB15_2;
-joy_db15 joy_db15
-(
-  .clk       ( CLK_JOY   ), //48MHz
-  .JOY_CLK   ( JOY_CLK   ),
-  .JOY_DATA  ( JOY_DATA  ),
-  .JOY_LOAD  ( JOY_LOAD  ),
-  .joystick1 ( JOYDB15_1 ),
-  .joystick2 ( JOYDB15_2 )	  
-);
-
 hps_io #(.CONF_STR(CONF_STR), .WIDE(0), .VDNUM(NBDRIV) ) hps_io
 (
 	.clk_sys(clk_sys),
 	.HPS_BUS(HPS_BUS),
 
-	.joy_raw(OSD_STATUS? (joydb_1[5:0]|joydb_2[5:0]) : 6'b000000 ),
+	.joy_raw(OSD_STATUS? (JOY_DB1[5:0]|JOY_DB2[5:0]) : 6'b000000 ),
 	.ps2_key(ps2_key),
 
 	.joystick_0(joystick_0_USB),
@@ -680,9 +698,13 @@ wire mt32_available;
 wire mt32_use  = mt32_available & ~mt32_disable;
 wire mt32_mute = mt32_available &  mt32_disable;
 
+wire [6:0] USER_IN_MT32 = mt32_disable ? 1 : USER_IN[6:0];
+wire [6:0] USER_OUT_MT32;
 mt32pi mt32pi
 (
 	.*,
+	.USER_IN(USER_IN_MT32),
+	.USER_OUT(USER_OUT_MT32),
 	.reset(mt32_reset),
 	.CE_PIXEL(mt32_ce_pix)
 
