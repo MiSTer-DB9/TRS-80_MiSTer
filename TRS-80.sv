@@ -160,76 +160,83 @@ module emu
 	// 2..6 - USR2..USR6
 	// Set USER_OUT to 1 to read from USER_IN.
 	output	USER_OSD,
-	output	[1:0] USER_MODE,
+	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: per-pin push-pull mask
+	output	[7:0] USER_PP,
+	// [MiSTer-DB9 END]
 	input	[7:0] USER_IN,
 	output	[7:0] USER_OUT,
 
 	input         OSD_STATUS
 );
 
-wire         CLK_JOY = CLK_50M & mt32_disable;         //Assign clock between 40-50Mhz
-wire   [2:0] JOY_FLAG = mt32_disable ? {db9md_ena,~db9md_ena,1'b0} : 3'b000;   //Assign 3 bits of status (31:29) o (63:61)
-wire         JOY_CLK, JOY_LOAD, JOY_SPLIT, JOY_MDSEL;
-wire   [5:0] JOY_MDIN  = JOY_FLAG[2] ? {USER_IN[6],USER_IN[3],USER_IN[5],USER_IN[7],USER_IN[1],USER_IN[2]} : '1;
-wire         JOY_DATA  = JOY_FLAG[1] ? USER_IN[5] : '1;
-//assign       USER_OUT  = JOY_FLAG[2] ? {3'b111,JOY_SPLIT,3'b111,JOY_MDSEL} : JOY_FLAG[1] ? {6'b111011,JOY_CLK,JOY_LOAD} : '1;
-assign       USER_MODE = JOY_FLAG[2:1] ;
-assign       USER_OSD  = JOY_DB1[10] & JOY_DB1[6];
 
-reg  db9md_ena=1'b0;
-reg  db9_1p_ena=1'b0,db9_2p_ena=1'b0;
-wire db9_status = db9md_ena ? 1'b1 : USER_IN[7];
-always @(posedge clk_sys) 
- begin
-	if(~db9md_ena & ~db9_status) db9md_ena <= 1'b1; 
-   if(JOYDB9MD_1[2] || JOYDB15_1[2]) db9_1p_ena <= 1'b1;
-	if(~JOYDB9MD_1[2] && JOYDB9MD_2[2] || JOYDB15_2[2]) db9_2p_ena <= 1'b1; //Se niega el del player 1 por si no hay Splitter que no se duplique
- end
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: USER_PP default (port_batch replaces with USER_PP_DRIVE)
+assign USER_PP = USER_PP_DRIVE;
+// [MiSTer-DB9 END]
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: joydb wrapper
+// CLK_JOY gated on mt32_disable (TRS-80 MT32 anti-contention pattern, see CLAUDE.md):
+// when MT32 is enabled (mt32_disable=0) the wrapper helpers see a stopped clock
+// so they cannot scan or drive the shared USER_IO pins.
+wire         CLK_JOY = CLK_50M & mt32_disable; // 40-50MHz, gated by mt32_disable
+wire   [1:0] joy_type        = status[127:126]; // 0=Off, 1=Saturn, 2=DB9MD, 3=DB15
+wire         joy_2p          = status[125];
+wire         joy_saturn_en   = (joy_type == 2'd1);
+wire         joy_db9md_en    = (joy_type == 2'd2);
+wire         joy_db15_en     = (joy_type == 2'd3);
+wire         joy_any_en      = |joy_type;
+// Legacy 3-bit alias for fork-specific MT32 / SNAC fallback code.
+wire   [2:0] JOY_FLAG        = {joy_db9md_en, joy_db15_en, joy_2p};
+// [MiSTer-DB9 END]
 
-wire [15:0] JOY_DB1 = db9md_ena ? JOYDB9MD_1 : JOYDB15_1;
-wire [15:0] JOY_DB2 = db9md_ena ? JOYDB9MD_2 : JOYDB15_2;
+// [MiSTer-DB9-Pro BEGIN] - Saturn key gate
+wire         saturn_unlocked;                   // driven by hps_io UIO_DB9_KEY (0xFE)
+// [MiSTer-DB9-Pro END]
 
-reg [15:0] JOYDB9MD_1,JOYDB9MD_2;
-joy_db9md joy_db9md
-(
-  .clk       ( CLK_JOY    ), //40-50MHz
-  .joy_split ( JOY_SPLIT  ),
-  .joy_mdsel ( JOY_MDSEL  ),
-  .joy_in    ( JOY_MDIN   ),
-  .joystick1 ( JOYDB9MD_1 ),
-  .joystick2 ( JOYDB9MD_2 )	  
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: joydb wrapper wires + instance
+wire   [7:0] USER_OUT_DRIVE;
+wire   [7:0] USER_PP_DRIVE;
+wire  [15:0] joydb_1, joydb_2;
+wire         joydb_1ena, joydb_2ena;
+wire  [15:0] joy_raw_payload;
+
+joydb joydb (
+  .clk             ( CLK_JOY         ),
+  .USER_IN         ( USER_IN         ),
+  .joy_type        ( joy_type        ),
+  .joy_2p          ( joy_2p          ),
+  .saturn_unlocked ( saturn_unlocked ),
+  .USER_OUT_DRIVE  ( USER_OUT_DRIVE  ),
+  .USER_PP_DRIVE   ( USER_PP_DRIVE   ),
+  .USER_OSD        ( USER_OSD        ),
+  .joydb_1         ( joydb_1         ),
+  .joydb_2         ( joydb_2         ),
+  .joydb_1ena      ( joydb_1ena      ),
+  .joydb_2ena      ( joydb_2ena      ),
+  .joy_raw         ( joy_raw_payload )
 );
+// USER_OUT driven by always_comb below (composes wrapper output with MT32 fallback).
+// [MiSTer-DB9 END]
 
-reg [15:0] JOYDB15_1,JOYDB15_2;
-joy_db15 joy_db15
-(
-  .clk       ( CLK_JOY   ), //48MHz
-  .JOY_CLK   ( JOY_CLK   ),
-  .JOY_DATA  ( JOY_DATA  ),
-  .JOY_LOAD  ( JOY_LOAD  ),
-  .joystick1 ( JOYDB15_1 ),
-  .joystick2 ( JOYDB15_2 )	  
-);
-
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: USER_OUT compose with MT32 anti-contention
+// TRS-80 MT32 anti-contention pattern (see CLAUDE.md "MT32-pi and USER_IO Pin
+// Contention", TRS-80 section): gate every USER_OUT branch on mt32_disable so
+// at boot (mt32_disable=0 by default until status loads) the MT32 fallback is
+// not driven into shared USER_IO. When mt32_disable=1 the wrapper drives the
+// joystick mode (DB9MD/DB15/Saturn/Off → USER_OUT_DRIVE).
 always_comb begin
-	USER_OUT    = 8'hFF; 
-	if( ~mt32_disable )begin
+	USER_OUT = 8'hFF;
+	if (~mt32_disable) begin
 		USER_OUT[6:0] = USER_OUT_MT32;
-	end else if (JOY_FLAG[1]) begin
-		USER_OUT[0] = JOY_LOAD;
-		USER_OUT[1] = JOY_CLK;
-		USER_OUT[6] = 1'b1;
-		USER_OUT[4] = 1'b1;
-	end else if (JOY_FLAG[2]) begin
-		USER_OUT[0] = JOY_MDSEL;
-		USER_OUT[1] = 1'b1;
-		USER_OUT[6] = 1'b1;
-		USER_OUT[4] = JOY_SPLIT;
+	end else begin
+		USER_OUT = USER_OUT_DRIVE;
 	end
 end
+// [MiSTer-DB9 END]
 
-wire [31:0] joystick_0 = db9_1p_ena ? JOY_DB1 : joystick_0_USB;
-wire [31:0] joystick_1 = db9_2p_ena ? JOY_DB2 : db9_1p_ena ? joystick_0_USB : joystick_1_USB;
+// [MiSTer-DB9-Pro BEGIN] - DB controllers muted while OSD is open
+wire [31:0] joystick_0 = joydb_1ena ? (OSD_STATUS ? 32'b0 : {16'b0, joydb_1}) : joystick_0_USB;
+wire [31:0] joystick_1 = joydb_2ena ? (OSD_STATUS ? 32'b0 : {16'b0, joydb_2}) : joydb_1ena ? joystick_0_USB : joystick_1_USB;
+// [MiSTer-DB9-Pro END]
 
 assign VGA_F1=0;
 assign HDMI_FREEZE = 0;
@@ -294,8 +301,10 @@ localparam CONF_STR = {
 	"P1r0,Reset Hanging Notes;",
 	
 	"-;",
-	"OUV,UserIO Joystick,Off,DB9MD,DB15 ;",
-	"OT,UserIO Players, 1 Player,2 Players;",
+	// [MiSTer-DB9-Pro BEGIN] - Saturn-first joy_type (canonical bit notation)
+	"O[127:126],UserIO Joystick,Off,Saturn,DB9MD,DB15;",
+	"O[125],UserIO Players, 1 Player,2 Players;",
+	// [MiSTer-DB9-Pro END]
 	"-;",
 	"O4,Kbd Layout,TRS-80,PC;",
 	"OAB,TRISSTICK,None,BIG5,ALPHA;",
@@ -330,7 +339,9 @@ pll pll
 	.outclk_0 (clk_sys) // 42 MHz
 );
 
-wire [63:0] status;
+// [MiSTer-DB9 BEGIN] - widened to 128 bits for joy_type at [127:126] and joy_2p at [125]
+wire [127:0] status;
+// [MiSTer-DB9 END]
 wire [15:0] menumask ;
 wire  [1:0] buttons;
 wire			cpum1;
@@ -369,7 +380,12 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(0), .VDNUM(NBDRIV) ) hps_io
 	.clk_sys(clk_sys),
 	.HPS_BUS(HPS_BUS),
 
-	.joy_raw(OSD_STATUS? (JOY_DB1[5:0]|JOY_DB2[5:0]) : 6'b000000 ),
+	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: joy_raw
+	.joy_raw(OSD_STATUS ? joy_raw_payload : 16'b0),
+	// [MiSTer-DB9 END]
+	// [MiSTer-DB9-Pro BEGIN] - Saturn key gate
+	.saturn_unlocked(saturn_unlocked),
+	// [MiSTer-DB9-Pro END]
 	.ps2_key(ps2_key),
 
 	.joystick_0(joystick_0_USB),
